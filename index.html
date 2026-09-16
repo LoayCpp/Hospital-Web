@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ar" dir="rtl" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0d3141">
+  <meta name="description" content="نظام محلي لمتابعة تحديثات الحالات الحرجة والوفاة الدماغية بالمستشفيات">
+  <title>متابعة تحديثات الحالات الحرجة والوفاة الدماغية — تجمع القصيم الصحي</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%230d8d8a'/%3E%3Cpath d='M16 29h11V18h10v11h11v10H37v11H27V39H16z' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <aside class="sidebar" aria-label="التنقل الرئيسي">
+    <div class="brand"><div class="brand-logo">ت</div><div><strong>متابعة الحالات الحرجة<br>والوفاة الدماغية</strong><small>تجمع القصيم الصحي · تنسيق التبرع بالأعضاء</small></div></div>
+    <nav>
+      <p>العمل اليومي</p>
+      <a href="#" data-nav="today"><span>◷</span> متابعة اليوم</a>
+      <a href="#" data-nav="report"><span>⎙</span> تقرير الحالة (PDF)</a>
+      <a href="#" data-nav="entry"><span>✎</span> إدخال البيانات</a>
+      <p>الأداء والمتابعة</p>
+      <a href="#" data-nav="dashboard"><span>▦</span> لوحة المؤشرات</a>
+      <a href="#" data-nav="monthly"><span>▤</span> المتابعة الشهرية</a>
+      <a href="#" data-nav="violations"><span>⚑</span> المخالفات والتصعيد</a>
+      <a href="#" data-nav="annual"><span>◔</span> الملخص السنوي</a>
+      <p>النظام</p>
+      <a href="#" data-nav="settings"><span>⚙</span> الإعدادات</a>
+      <a href="#" data-nav="backup"><span>⇅</span> البيانات والنسخ الاحتياطي</a>
+      <a href="#" data-nav="guide"><span>?</span> دليل الاستخدام</a>
+    </nav>
+    <div class="theme-switch"><button data-theme="light">☀ فاتح</button><button data-theme="dark">☾ داكن</button></div>
+    <div class="storage-state" aria-live="polite">
+      <small class="privacy-dot" id="syncStatus"><span class="dot"></span> جاري فحص التخزين…</small>
+      <small class="privacy-dot" id="lastEntry"><span class="dot"></span> آخر إدخال: —</small>
+      <button id="logoutButton" type="button" hidden>تسجيل الخروج</button>
+    </div>
+  </aside>
+  <div class="page-shell">
+    <header class="topbar"><button id="menuToggle" aria-label="فتح القائمة">☰</button><div class="topbar-title"><h1 id="pageTitle"></h1><p id="pageSubtitle"></p></div><div id="pageTools" class="page-tools"></div></header>
+    <main><div id="app"></div></main>
+  </div>
+  <script src="assets/vendor/jszip.min.js"></script>
+  <script src="src/rules.js"></script>
+  <script src="src/storage.js"></script>
+  <script src="src/xlsx.js"></script>
+  <script src="src/app.js"></script>
+</body>
+</html>
