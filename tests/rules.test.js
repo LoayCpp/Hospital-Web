@@ -149,3 +149,45 @@ test("اليوم المستقبلي لا يدخل في المؤشر", () => {
   assert.equal(R.isDueDate("2026-09-16", {}, settings, now), false);
   assert.equal(R.isDueDate("2026-09-14", {}, settings, now), true);
 });
+
+test("نافذة الثلاثة أشهر تبدأ من الشهر المختار", () => {
+  assert.deepEqual(R.monthWindow("2026-01"), ["2026-01", "2026-02", "2026-03"]);
+});
+
+test("نافذة الأشهر تعبر نهاية السنة دون فقدان الترتيب", () => {
+  assert.deepEqual(R.monthWindow("2026-11"), ["2026-11", "2026-12", "2027-01"]);
+  assert.deepEqual(R.monthWindow("2026-12"), ["2026-12", "2027-01", "2027-02"]);
+});
+
+test("نافذة الأشهر ترفض الشهر أو العدد غير الصحيح", () => {
+  assert.throws(() => R.monthWindow("2026-13"), RangeError);
+  assert.throws(() => R.monthWindow("يناير"), TypeError);
+  assert.throws(() => R.monthWindow("2026-01", 0), RangeError);
+});
+
+test("تجميع الفترة يزن المؤشر بعدد الأيام المستحقة ويجمع النشاط", () => {
+  const result = R.aggregatePeriodStats([
+    { due: 1, sent: 1, ontime: 1, required: 2, updated: 2, score: 100, load: 3, newCases: 1, exits: 0, brainDeath: 1, counts: { late: 1 } },
+    { due: 2, sent: 1, ontime: 0, required: 4, updated: 2, score: 50, load: 5, newCases: 2, exits: 1, brainDeath: 0, counts: { missed: 1 } },
+    { due: 0, sent: 0, ontime: 0, required: 0, updated: 0, score: 0 },
+  ]);
+  assert.equal(result.due, 3);
+  assert.equal(result.sent, 2);
+  assert.ok(Math.abs(result.score - 200 / 3) < 1e-9);
+  assert.ok(Math.abs(result.response - 200 / 3) < 1e-9);
+  assert.ok(Math.abs(result.completion - 200 / 3) < 1e-9);
+  assert.equal(result.newCases, 3);
+  assert.equal(result.exits, 1);
+  assert.equal(result.brainDeath, 1);
+  assert.equal(result.counts.missed, 1);
+  assert.equal(result.counts.late, 1);
+});
+
+test("تجميع فترة بلا أيام مستحقة يعيد نسبًا آمنة واكتمالًا غير منطبق", () => {
+  const result = R.aggregatePeriodStats([]);
+  assert.equal(result.due, 0);
+  assert.equal(result.response, 0);
+  assert.equal(result.punctuality, 0);
+  assert.equal(result.score, 0);
+  assert.equal(result.completion, null);
+});

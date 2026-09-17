@@ -254,6 +254,11 @@ pre { margin: 0; white-space: pre-wrap; color: var(--ink); font: 500 12.5px/1.9 
 .line-cards span { color: var(--muted); font-size: 11px; }
 .line-cards strong { display: block; margin: 6px 0; }
 .line-cards progress { width: 100%; height: 7px; accent-color: var(--teal); }
+.quarterly-toolbar label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.quarterly-toolbar select { min-width: 210px; }
+.quarterly-notice span, .quarterly-lines small { color: var(--muted); }
+.quarterly-lines { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.quarterly-lines small { display: block; margin-top: 7px; font-size: 10.5px; }
 
 .settings-section { display: grid; gap: 6px; }
 .weight-row { display: grid; grid-template-columns: auto 1fr 85px auto; gap: 12px; align-items: center; padding: 12px; background: var(--sand); border-radius: 11px; }
@@ -293,6 +298,7 @@ pre { margin: 0; white-space: pre-wrap; color: var(--ink); font: 500 12.5px/1.9 
   .backup-stats, .report-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .hospital-pills { grid-template-columns: repeat(5, minmax(120px, 1fr)); }
   .line-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .quarterly-lines { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 1050px) {
   .backup-grid, .guide-grid, .settings-grid, .followup-grid { grid-template-columns: 1fr; }
@@ -312,6 +318,7 @@ pre { margin: 0; white-space: pre-wrap; color: var(--ink); font: 500 12.5px/1.9 
   .toolbar { width: 100%; overflow-x: auto; padding-bottom: 3px; }
   main { padding: 18px; }
   #app, .stats-grid, .report-kpis, .backup-stats, .line-cards, .state-list { grid-template-columns: 1fr; }
+  .quarterly-toolbar select { min-width: 180px; }
   .phase { display: block; }
   .phase > div:first-child { align-items: flex-start; }
   .phase .actions { display: flex; margin-top: 16px; overflow-x: auto; }

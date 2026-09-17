@@ -135,6 +135,41 @@
   }
   function daysInMonth(year, month) { return new Date(year, month, 0).getDate(); }
   function addDays(iso, amount) { const d = new Date(`${iso}T12:00:00`); d.setDate(d.getDate() + amount); return isoDate(d); }
+  function addMonths(yearMonth, amount) {
+    const match = /^(\d{4})-(\d{2})$/.exec(String(yearMonth || ""));
+    if (!match) throw new TypeError("صيغة الشهر يجب أن تكون YYYY-MM");
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    if (month < 1 || month > 12 || !Number.isInteger(amount)) throw new RangeError("الشهر أو الإزاحة غير صحيحة");
+    const absoluteMonth = year * 12 + month - 1 + amount;
+    const nextYear = Math.floor(absoluteMonth / 12);
+    const nextMonth = absoluteMonth - nextYear * 12 + 1;
+    return `${String(nextYear).padStart(4, "0")}-${String(nextMonth).padStart(2, "0")}`;
+  }
+  function monthWindow(startMonth, count = 3) {
+    if (!Number.isInteger(count) || count < 1 || count > 120) throw new RangeError("عدد الأشهر غير صحيح");
+    return Array.from({ length: count }, (_, index) => addMonths(startMonth, index));
+  }
+
+  function aggregatePeriodStats(items = []) {
+    const totals = {
+      due: 0, sent: 0, ontime: 0, required: 0, updated: 0, load: 0,
+      newCases: 0, exits: 0, brainDeath: 0,
+      counts: { missed: 0, late: 0, partial: 0, invalid: 0, afterDeadline: 0 },
+    };
+    items.forEach((item = {}) => {
+      ["due", "sent", "ontime", "required", "updated", "load", "newCases", "exits", "brainDeath"].forEach((key) => { totals[key] += number(item[key]); });
+      Object.keys(totals.counts).forEach((key) => { totals.counts[key] += number(item.counts?.[key]); });
+    });
+    const weightedScore = items.reduce((sum, item = {}) => sum + number(item.score) * number(item.due), 0);
+    return {
+      ...totals,
+      response: totals.due ? totals.sent / totals.due * 100 : 0,
+      punctuality: totals.due ? totals.ontime / totals.due * 100 : 0,
+      completion: totals.required ? totals.updated / totals.required * 100 : null,
+      score: totals.due ? weightedScore / totals.due : 0,
+    };
+  }
 
   function isDueDate(date, record, settings = DEFAULT_SETTINGS, now = new Date()) {
     if (date < settings.startDate) return false;
@@ -168,5 +203,5 @@
     return Object.values(counts).some((v) => v > 0) ? 1 : 0;
   }
 
-  return { DEFAULT_SETTINGS, DEFAULT_HOSPITALS, minutes, clamp, number, hasValue, normalizeWeights, timeFactor, validateRecord, calculateRecord, recordKey, isoDate, daysInMonth, addDays, isDueDate, performanceLabel, statusMeta, escalation };
+  return { DEFAULT_SETTINGS, DEFAULT_HOSPITALS, minutes, clamp, number, hasValue, normalizeWeights, timeFactor, validateRecord, calculateRecord, recordKey, isoDate, daysInMonth, addDays, addMonths, monthWindow, aggregatePeriodStats, isDueDate, performanceLabel, statusMeta, escalation };
 });

@@ -9,6 +9,8 @@
   let selectedDate = R.isoDate();
   let selectedMonth = selectedDate.slice(0, 7);
   let selectedYear = selectedDate.slice(0, 4);
+  let selectedQuarterStart = selectedMonth;
+  let selectedQuarterHospital = "all";
   let reportMode = "day";
   let lastStorageAlert = "";
 
@@ -19,6 +21,7 @@
     entry: ["إدخال البيانات", "سجّل رد كل مستشفى كما وصل — يُحفظ تلقائيًا"],
     dashboard: ["لوحة المؤشرات", "أداء المستشفيات خلال الشهر المختار"],
     monthly: ["المتابعة الشهرية", "استجابة كل مستشفى يومًا بيوم"],
+    quarterly: ["ملخص ثلاثة أشهر", "فترة متحركة تبدأ من الشهر المختار وتشمل الشهرين التاليين"],
     violations: ["المخالفات والتصعيد", "المستشفيات غير الملتزمة ومستوى التصعيد المقترح"],
     annual: ["الملخص السنوي", "المؤشر الشهري لكل مستشفى واتجاه التجمع"],
     settings: ["الإعدادات", "عناصر الدرجة ووقت التحديث والتصعيد والمستشفيات"],
@@ -192,7 +195,7 @@
     const counts = { missed: 0, late: 0, partial: 0, invalid: 0, afterDeadline: 0 };
     rows.forEach((x) => { if (Object.hasOwn(counts, x.status)) counts[x.status] += 1; });
     const load = rows.reduce((s, x) => s + x.r.required + n(x.r.newCases), 0);
-    return { hospital, rows, due, sent, ontime, required, updated, response: due ? sent / due * 100 : 0, punctuality: due ? ontime / due * 100 : 0, completion: required ? updated / required * 100 : null, score, counts, load };
+    return { hospital, rows, due, sent, ontime, required, updated, response: due ? sent / due * 100 : 0, punctuality: due ? ontime / due * 100 : 0, completion: required ? updated / required * 100 : null, score, counts, load, ...activityTotals(rows) };
   }
 
   function monthSummary(ym) {
@@ -204,6 +207,42 @@
     const required = hospitals.reduce((s, x) => s + x.required, 0); const updated = hospitals.reduce((s, x) => s + x.updated, 0);
     const scores = hospitals.flatMap((x) => x.rows.map((r) => r.r.score));
     return { hospitals, due, sent, ontime, required, updated, response: due ? sent / due * 100 : 0, punctuality: due ? ontime / due * 100 : 0, completion: required ? updated / required * 100 : null, score: scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0 };
+  }
+
+  function activityTotals(rows) {
+    return rows.reduce((total, item) => {
+      total.newCases += n(item.r.newCases);
+      total.exits += n(item.r.exits);
+      total.brainDeath += n(item.r.brainDeath);
+      return total;
+    }, { newCases: 0, exits: 0, brainDeath: 0 });
+  }
+
+  function hospitalPeriod(hospital, months) {
+    const monthStats = months.map((month) => ({ ...hospitalMonth(hospital, month), month }));
+    const rows = monthStats.flatMap((item) => item.rows);
+    return { hospital, monthStats, rows, ...R.aggregatePeriodStats(monthStats) };
+  }
+
+  function quarterlySummary(startMonth = selectedQuarterStart, hospitalId = selectedQuarterHospital) {
+    const months = R.monthWindow(startMonth, 3);
+    const allHospitals = activeHospitals().map((hospital) => hospitalPeriod(hospital, months));
+    const maxLoad = Math.max(0, ...allHospitals.map((item) => item.load));
+    allHospitals.forEach((item) => {
+      item.bonus = data.settings.caseLoadBonusEnabled && maxLoad ? item.load / maxLoad * n(data.settings.maxCaseLoadBonus) : 0;
+      item.rankingPoints = Math.min(110, item.score + item.bonus);
+    });
+    allHospitals.sort((a, b) => b.rankingPoints - a.rankingPoints || b.score - a.score || b.load - a.load);
+    allHospitals.forEach((item, index) => { item.rank = index + 1; });
+    const validHospitalId = allHospitals.some((item) => item.hospital.id === hospitalId) ? hospitalId : "all";
+    const hospitals = validHospitalId === "all" ? allHospitals : allHospitals.filter((item) => item.hospital.id === validHospitalId);
+    const monthly = months.map((month) => {
+      const items = validHospitalId === "all"
+        ? allHospitals.map((item) => item.monthStats.find((entry) => entry.month === month))
+        : [hospitals[0].monthStats.find((entry) => entry.month === month)];
+      return { month, ...R.aggregatePeriodStats(items) };
+    });
+    return { startMonth, months, hospitalId: validHospitalId, hospitals, monthly, ...R.aggregatePeriodStats(hospitals) };
   }
 
   function statCard(label, value, note, tone = "teal") { return `<article class="stat-card ${tone}"><span>${label}</span><strong>${value}</strong><small>${note}</small></article>`; }
@@ -265,6 +304,21 @@
 
   function renderMonthly(){const dates=dateRangeForMonth(selectedMonth);const hospitals=activeHospitals();return `${monthControls()}<section class="legend">${["complete","zero","partial","late","afterDeadline","missed","pending","invalid"].map(s=>badge(s)).join("")}</section><section class="panel"><div class="panel-title"><h3>سجل الاستجابة يومًا بيوم</h3><span>اضغط على أي خانة لفتح إدخال ذلك اليوم</span></div><div class="table-wrap matrix"><table><thead><tr><th>المستشفى</th>${dates.map(d=>`<th>${Number(d.slice(-2))}<small>${dayNames[new Date(d+"T12:00:00").getDay()].slice(0,3)}</small></th>`).join("")}<th>لم يرسل</th><th>متأخر</th><th>المؤشر</th></tr></thead><tbody>${hospitals.map(h=>{const hm=hospitalMonth(h,selectedMonth);return `<tr><td><strong>${esc(h.name.replace(/^مستشفى |^مركز /,""))}</strong></td>${dates.map(date=>{const r=calc(date,h.id);let st=R.isDueDate(date,r,data.settings)?resolvedStatus(date,r):(date===R.isoDate()&&!r.reported?"pending":"future");const meta=R.statusMeta(st);return `<td><button class="matrix-cell ${statusClass[meta[2]]}" data-cell-date="${date}" title="${esc(meta[1])}">${meta[0]}</button></td>`;}).join("")}<td>${hm.counts.missed}</td><td>${hm.counts.late+hm.counts.afterDeadline}</td><td>${pct(hm.score)}</td></tr>`;}).join("")}</tbody></table></div></section>`;}
 
+  function quarterControls(summary) {
+    const options = activeHospitals().map((hospital) => `<option value="${hospital.id}" ${summary.hospitalId === hospital.id ? "selected" : ""}>${esc(hospital.name)}</option>`).join("");
+    return `<div class="toolbar quarterly-toolbar no-print"><label>شهر البداية <input id="quarterStartPicker" type="month" value="${selectedQuarterStart}"></label><label>النطاق <select id="quarterHospitalPicker"><option value="all" ${summary.hospitalId === "all" ? "selected" : ""}>جميع المستشفيات</option>${options}</select></label><button class="soft" data-action="print">طباعة / PDF</button><button class="soft" data-action="quarter-export">تصدير Excel</button></div>`;
+  }
+
+  function renderQuarterly() {
+    const summary = quarterlySummary();
+    const endMonth = summary.months.at(-1);
+    const selectedName = summary.hospitalId === "all" ? "جميع المستشفيات المحتسبة" : summary.hospitals[0]?.hospital.name;
+    const metric = (value) => summary.due ? pct(value) : "—";
+    const monthlyRows = summary.monthly.map((item) => `<tr><td><strong>${monthLabel(item.month)}</strong></td><td>${item.due}</td><td>${item.sent}</td><td>${item.due ? pct(item.response) : "—"}</td><td>${item.ontime}</td><td>${item.due ? pct(item.punctuality) : "—"}</td><td>${item.completion === null ? "—" : pct(item.completion)}</td><td>${item.due ? grade(item.score) : "—"}</td><td>${item.newCases}</td><td>${item.exits}</td><td>${item.brainDeath}</td></tr>`).join("");
+    const hospitalRows = summary.hospitals.map((item) => `<tr><td>${item.rank}</td><td><strong>${esc(item.hospital.name)}</strong></td><td>${item.load}</td><td>${item.due}</td><td>${item.sent}</td><td>${item.due ? pct(item.response) : "—"}</td><td>${item.ontime}</td><td>${item.due ? pct(item.punctuality) : "—"}</td><td>${item.updated} / ${item.required}</td><td>${item.completion === null ? "—" : pct(item.completion)}</td><td>${item.newCases}</td><td>${item.exits}</td><td>${item.brainDeath}</td><td>${item.due ? grade(item.score) : "—"}</td><td>${item.due ? `${Math.round(item.rankingPoints)}${item.bonus ? `<small> +${item.bonus.toFixed(1)}</small>` : ""}` : "—"}</td></tr>`).join("");
+    return `${quarterControls(summary)}<div class="notice quarterly-notice"><b>الفترة المختارة:</b> ${monthLabel(summary.startMonth)} — ${monthLabel(endMonth)} · ${esc(selectedName || "جميع المستشفيات")}<br><span>تُحتسب الأيام المستحقة حتى الآن فقط؛ اختيار يناير مثلًا يشمل يناير وفبراير ومارس.</span></div><section class="stats-grid">${statCard("نسبة الاستجابة",metric(summary.response),`${summary.sent} تقرير من ${summary.due} مستحق`)}${statCard("الإرسال في الوقت",metric(summary.punctuality),`${summary.ontime} تقرير حتى ${data.settings.fullUntil}`,"green")}${statCard("اكتمال التحديث",summary.completion === null ? "—" : pct(summary.completion),`${summary.updated} من ${summary.required} حالة×يوم`,"blue")}${statCard("المؤشر العام",metric(summary.score),summary.due ? R.performanceLabel(summary.score,data.settings).label : "لا توجد أيام مستحقة","violet")}${statCard("بلاغات جديدة",summary.newCases,"خلال الفترة","blue")}${statCard("وفاة دماغية",summary.brainDeath,`خروج/وفاة/تبرع: ${summary.exits}`,"red")}</section><section class="panel"><div class="panel-title"><h3>المقارنة الشهرية</h3><span>${summary.months.map(monthLabel).join(" · ")}</span></div><div class="table-wrap"><table><thead><tr><th>الشهر</th><th>مستحق</th><th>أرسل</th><th>الاستجابة</th><th>في الوقت</th><th>نسبة الالتزام بالوقت</th><th>اكتمال التحديث</th><th>المؤشر</th><th>بلاغات جديدة</th><th>خروج/وفاة/تبرع</th><th>وفاة دماغية</th></tr></thead><tbody>${monthlyRows}</tbody></table></div></section><section class="panel"><div class="panel-title"><h3>ملخص المستشفيات خلال الفترة</h3><span>الترتيب يشمل ميزة عبء الحالات من الإعدادات</span></div><div class="table-wrap"><table><thead><tr><th>#</th><th>المستشفى</th><th>عبء الحالات</th><th>مستحق</th><th>أرسل</th><th>الاستجابة</th><th>في الوقت</th><th>الالتزام بالوقت</th><th>المحدث / المطلوب</th><th>الاكتمال</th><th>جديد</th><th>خروج</th><th>وفاة دماغية</th><th>المؤشر</th><th>نقاط الترتيب</th></tr></thead><tbody>${hospitalRows || `<tr><td colspan="15" class="empty">لا توجد مستشفيات محتسبة.</td></tr>`}</tbody></table></div></section><section class="panel"><div class="panel-title"><h3>اتجاه المؤشر في الأشهر الثلاثة</h3></div><div class="line-cards quarterly-lines">${summary.monthly.map((item) => `<div><span>${monthLabel(item.month)}</span><strong>${item.due ? pct(item.score) : "—"}</strong><progress max="100" value="${item.due ? item.score : 0}"></progress><small>${item.sent} من ${item.due} تقرير</small></div>`).join("")}</div></section>`;
+  }
+
   function violationRows(){return monthSummary(selectedMonth).hospitals.map(hm=>{const counts=hm.counts;const level=R.escalation({missed:counts.missed,late:counts.late+counts.afterDeadline,partial:counts.partial,invalid:counts.invalid},data.settings);return {...hm,level,total:Object.values(counts).reduce((a,b)=>a+b,0)};});}
   function renderViolations(){const rows=violationRows();const total=rows.reduce((s,x)=>s+x.total,0);const needs=rows.filter(x=>x.level>0).length;const details=rows.flatMap(x=>x.rows.filter(r=>["missed","late","afterDeadline","partial","invalid"].includes(r.status)).map(r=>({h:x.hospital,date:r.date,...r})));return `${monthControls()}<section class="stats-grid">${statCard("إجمالي المخالفات",total,monthLabel(selectedMonth),"red")}${statCard("مستشفيات تحتاج متابعة",`${needs} / ${rows.length}`,"المستوى 1 فأعلى","amber")}${statCard("المستوى 2 (خطاب تنبيه)",rows.filter(x=>x.level===2).length,"حسب حدود الإعدادات","blue")}${statCard("المستوى 3 (تصعيد)",rows.filter(x=>x.level===3).length,"يتطلب خطة تصحيحية","red")}</section><section class="panel"><div class="panel-title"><h3>ملخص المخالفات حسب المستشفى</h3><span>حدود المستويات من الإعدادات</span></div><div class="table-wrap"><table><thead><tr><th>المستشفى</th><th>لم يرسل</th><th>بعد الموعد</th><th>متأخر</th><th>جزئي</th><th>خطأ</th><th>الإجمالي</th><th>المستوى</th><th>الإجراء</th></tr></thead><tbody>${rows.map(x=>`<tr><td><strong>${esc(x.hospital.name)}</strong></td><td>${x.counts.missed}</td><td>${x.counts.afterDeadline}</td><td>${x.counts.late}</td><td>${x.counts.partial}</td><td>${x.counts.invalid}</td><td>${x.total}</td><td>${x.level?`المستوى ${x.level}`:"ملتزم"}</td><td>${x.level===3?"تصعيد مع خطة تصحيحية":x.level===2?"خطاب تنبيه":x.level===1?"تذكير ومتابعة":"لا إجراء"}</td></tr>`).join("")}</tbody></table></div></section><section class="panel"><div class="panel-title"><h3>تفاصيل المخالفات</h3><span>العدد: ${details.length}</span></div><div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>المستشفى</th><th>الحالة</th><th>المطلوب</th><th>المحدث الفعلي</th><th>الوقت</th><th>الدرجة</th><th></th></tr></thead><tbody>${details.map(x=>`<tr><td>${formatDate(x.date)}</td><td>${esc(x.h.name)}</td><td>${badge(x.status)}</td><td>${x.r.required}</td><td>${x.r.effectiveUpdated}</td><td>${x.r.receivedAt||"—"}</td><td>${pct(x.r.score)}</td><td><button data-cell-date="${x.date}">فتح اليوم</button></td></tr>`).join("")||`<tr><td colspan="8" class="empty">لا توجد مخالفات في هذا الشهر.</td></tr>`}</tbody></table></div></section>`;}
 
@@ -276,9 +330,9 @@
   function recordsList(){return Object.entries(data.records).filter(([,r])=>Object.values(r).some(R.hasValue));}
   function renderBackup(){const list=recordsList();const dates=[...new Set(list.map(([k])=>k.split("::")[0]))].sort();const cloud=S.status().mode!=="local";const storageNotice=cloud?"<b>● البيانات متزامنة مع Neon:</b> تبقى نسخة مؤقتة على هذا الجهاز للعمل عند انقطاع الاتصال. صدّر نسخة احتياطية دوريًا.":"<b>● البيانات محفوظة محليًا:</b> لا تُرسل لأي خادم. صدّر نسخة احتياطية أسبوعيًا، واستخدمها لنقل البيانات إلى جهاز آخر.";return `${monthControls()}<div class="notice storage-notice">${storageNotice}</div><section class="stats-grid backup-stats">${statCard("أيام مُدخلة",dates.length,dates.length?`${formatDate(dates[0])} — ${formatDate(dates.at(-1))}`:"لا توجد بيانات")}${statCard("صفوف مُدخلة",list.length,"مستشفى × يوم","blue")}${statCard("المستشفيات المحتسبة",activeHospitals().length,`من ${data.hospitals.length}`,"green")}${statCard("بداية المتابعة",formatDate(data.settings.startDate),`الدرجة كاملة حتى ${data.settings.fullUntil} — صفر عند ${data.settings.deadline}`,"violet")}</section><section class="backup-grid"><article class="panel"><h3>تصدير</h3><div class="export-actions"><div class="export-row"><div><h4>تقرير Excel</h4><p>ملف حقيقي متعدد الأوراق: ملخص الشهر، السجل الكامل، القواعد والإعدادات، والمستشفيات.</p></div><button class="primary" data-action="export-excel">تنزيل Excel</button></div><div class="export-row"><div><h4>Google Sheets</h4><p>ينزّل التقرير المتوافق ويفتح Google Sheets لاستيراده مع جميع الأوراق والنِسَب.</p></div><button class="google-button" data-action="google-sheets">فتح في Google Sheets</button></div><div class="export-row"><div><h4>نسخة احتياطية</h4><p>ملف واحد يحفظ كل البيانات والإعدادات لاستعادتها لاحقًا أو على جهاز آخر.</p></div><button data-action="export-backup">تنزيل نسخة احتياطية</button></div></div></article><article class="panel"><h3>استيراد</h3><div class="export-actions"><div class="export-row"><div><h4>من ملف CSV سابق</h4><p>يضيف الصفوف ويستبدل بيانات اليوم والمستشفى المطابقين فقط.</p></div><label class="file-button">اختيار ملف CSV<input hidden id="csvImport" type="file" accept=".csv,text/csv"></label></div><div class="export-row"><div><h4>استعادة نسخة احتياطية</h4><p>تحل محل جميع البيانات والإعدادات الحالية وتُزامنها مع Neon عند الاتصال.</p></div><label class="file-button soft-file">اختيار النسخة<input hidden id="backupImport" type="file" accept=".json,application/json"></label></div></div></article></section><section class="panel danger-zone delete-panel"><div><h3>حذف البيانات</h3><p>يحذف جميع الإدخالات ${cloud?"من قاعدة Neon ومن النسخة المحلية":"من هذا الجهاز"} مع إبقاء الإعدادات والمستشفيات. صدّر نسخة احتياطية أولًا.</p></div><button data-action="clear-records">حذف كل الإدخالات</button></section>`;}
 
-  function renderGuide(){const states=[["complete","أُرسل حتى الوقت الكامل وحُدّثت جميع الحالات."],["zero","لا توجد حالات وأُرسلت الإفادة في الوقت."],["partial","أُرسل لكن بعض الحالات لم تُحدّث."],["late",`وصل بعد ${data.settings.fullUntil} وحتى ${data.settings.deadline} ويطبق الخصم التدريجي.`],["afterDeadline",`وصل بعد ${data.settings.deadline} ودرجة اليوم صفر.`],["missed","لا يوجد أي إدخال بعد انتهاء الموعد."],["pending","لم يصل بعد وما زال قبل الموعد النهائي."],["invalid","وقت مفقود أو أرقام غير متسقة."]];return `<section class="guide-grid"><article class="panel"><h3>العمل اليومي للمنسق</h3><ol><li>افتح «إدخال البيانات» على تاريخ اليوم.</li><li>أدخل البلاغات الجديدة والخروج/الوفاة/التبرع والمحدث ووقت الاستلام.</li><li>عند عدم وجود حالات، استخدم «إفادة صفرية».</li><li>تابع المتأخرين من «متابعة اليوم» وانسخ رسائل التذكير.</li><li>اطبع «تقرير الحالة» بصيغة PDF عند اكتمال الإفادات.</li><li>راجع المخالفات والتصعيد شهريًا، وصدّر نسخة احتياطية أسبوعيًا.</li></ol></article><article class="panel"><h3>قواعد الحساب الدقيقة</h3><ul><li><b>المرحّل:</b> الرصيد الختامي لآخر يوم سابق لنفس المستشفى.</li><li><b>تعديل الرصيد:</b> يحل محل المرحّل عند اختلاف العدد الفعلي.</li><li><b>المطلوب:</b> الرصيد المرحّل/المعدّل فقط؛ البلاغ الجديد يصبح مطلوبًا غدًا.</li><li><b>المحدث الفعلي:</b> عدد الحالات المحدثة فقط، وبحد أقصى المطلوب؛ الخروج لا يُضاف إليه.</li><li><b>الختامي:</b> الرصيد الافتتاحي + البلاغات الجديدة − الخروج.</li><li><b>الدرجة:</b> إرسال التقرير 40% + اكتمال الحالات 40% + صحة البيانات 20%، ثم تضرب في معامل الوقت.</li><li><b>المؤشر الشهري:</b> متوسط الدرجات اليومية المستحقة، وعدم الإرسال = صفر.</li></ul></article></section><section class="panel"><h3>حالات الاستجابة</h3><div class="state-list">${states.map(([s,d])=>`<div>${badge(s)}<p>${d}</p></div>`).join("")}</div></section>`;}
+  function renderGuide(){const states=[["complete","أُرسل حتى الوقت الكامل وحُدّثت جميع الحالات."],["zero","لا توجد حالات وأُرسلت الإفادة في الوقت."],["partial","أُرسل لكن بعض الحالات لم تُحدّث."],["late",`وصل بعد ${data.settings.fullUntil} وحتى ${data.settings.deadline} ويطبق الخصم التدريجي.`],["afterDeadline",`وصل بعد ${data.settings.deadline} ودرجة اليوم صفر.`],["missed","لا يوجد أي إدخال بعد انتهاء الموعد."],["pending","لم يصل بعد وما زال قبل الموعد النهائي."],["invalid","وقت مفقود أو أرقام غير متسقة."]];return `<section class="guide-grid"><article class="panel"><h3>العمل اليومي للمنسق</h3><ol><li>افتح «إدخال البيانات» على تاريخ اليوم.</li><li>أدخل البلاغات الجديدة والخروج/الوفاة/التبرع والمحدث ووقت الاستلام.</li><li>عند عدم وجود حالات، استخدم «إفادة صفرية».</li><li>تابع المتأخرين من «متابعة اليوم» وانسخ رسائل التذكير.</li><li>اطبع «تقرير الحالة» بصيغة PDF عند اكتمال الإفادات.</li><li>راجع المخالفات والتصعيد شهريًا، وصدّر نسخة احتياطية أسبوعيًا.</li><li>من «ملخص ثلاثة أشهر» اختر شهر البداية وجميع المستشفيات أو مستشفى واحدًا، ثم اطبع أو صدّر Excel.</li></ol></article><article class="panel"><h3>قواعد الحساب الدقيقة</h3><ul><li><b>المرحّل:</b> الرصيد الختامي لآخر يوم سابق لنفس المستشفى.</li><li><b>تعديل الرصيد:</b> يحل محل المرحّل عند اختلاف العدد الفعلي.</li><li><b>المطلوب:</b> الرصيد المرحّل/المعدّل فقط؛ البلاغ الجديد يصبح مطلوبًا غدًا.</li><li><b>المحدث الفعلي:</b> عدد الحالات المحدثة فقط، وبحد أقصى المطلوب؛ الخروج لا يُضاف إليه.</li><li><b>الختامي:</b> الرصيد الافتتاحي + البلاغات الجديدة − الخروج.</li><li><b>الدرجة:</b> إرسال التقرير 40% + اكتمال الحالات 40% + صحة البيانات 20%، ثم تضرب في معامل الوقت.</li><li><b>المؤشر الشهري:</b> متوسط الدرجات اليومية المستحقة، وعدم الإرسال = صفر.</li><li><b>ملخص ثلاثة أشهر:</b> الشهر المختار مع الشهرين التاليين، ومؤشره متوسط موزون بعدد الأيام المستحقة.</li></ul></article></section><section class="panel"><h3>حالات الاستجابة</h3><div class="state-list">${states.map(([s,d])=>`<div>${badge(s)}<p>${d}</p></div>`).join("")}</div></section>`;}
 
-  function content(){return ({today:renderToday,report:renderReport,entry:renderEntry,dashboard:renderDashboard,monthly:renderMonthly,violations:renderViolations,annual:renderAnnual,settings:renderSettings,backup:renderBackup,guide:renderGuide})[view]();}
+  function content(){return ({today:renderToday,report:renderReport,entry:renderEntry,dashboard:renderDashboard,monthly:renderMonthly,quarterly:renderQuarterly,violations:renderViolations,annual:renderAnnual,settings:renderSettings,backup:renderBackup,guide:renderGuide})[view]();}
   function render(){
     if (!accessGranted) return;
     const [title,subtitle]=viewTitles[view];
@@ -302,6 +356,8 @@
     document.getElementById("datePicker")?.addEventListener("change",e=>{selectedDate=e.target.value;selectedMonth=selectedDate.slice(0,7);render();});
     document.getElementById("monthPicker")?.addEventListener("change",e=>{selectedMonth=e.target.value;render();});
     document.getElementById("yearPicker")?.addEventListener("change",e=>{selectedYear=e.target.value;render();});
+    document.getElementById("quarterStartPicker")?.addEventListener("change",e=>{if(e.target.value){selectedQuarterStart=e.target.value;render();}});
+    document.getElementById("quarterHospitalPicker")?.addEventListener("change",e=>{selectedQuarterHospital=e.target.value;render();});
     document.querySelectorAll("[data-action='print']").forEach(el=>el.addEventListener("click",()=>window.print()));
     document.querySelectorAll("[data-action='month-report']").forEach(el=>el.addEventListener("click",()=>{reportMode="month";view="report";render();}));
     document.querySelectorAll("[data-report-mode]").forEach(el=>el.addEventListener("click",()=>{reportMode=el.dataset.reportMode;render();}));
@@ -325,6 +381,7 @@
     document.querySelector("[data-action='reset-settings']")?.addEventListener("click",()=>{if(confirm("إعادة قواعد التقييم والوقت إلى القيم الافتراضية؟")){data.settings=JSON.parse(JSON.stringify(R.DEFAULT_SETTINGS));S.save(data);render();}});
     document.querySelector("[data-action='export-backup']")?.addEventListener("click",()=>download(`نسخة-احتياطية-${R.isoDate()}.json`,S.exportBackup(data),"application/json;charset=utf-8"));
     document.querySelector("[data-action='export-excel']")?.addEventListener("click",exportExcel);
+    document.querySelector("[data-action='quarter-export']")?.addEventListener("click",exportQuarterExcel);
     document.querySelector("[data-action='google-sheets']")?.addEventListener("click",openGoogleSheets);
     document.querySelector("[data-action='clear-records']")?.addEventListener("click",()=>{const target=S.status().mode==="local"?"هذا المتصفح":"قاعدة Neon وكل الأجهزة المتصلة";if(confirm(`سيتم حذف جميع الإدخالات نهائيًا من ${target}. هل أنت متأكد؟`)){S.clearRecords(data);toast("تم حذف الإدخالات");render();}});
     document.querySelector("[data-action='demo-data']")?.addEventListener("click",()=>{if(confirm("إضافة بيانات تجريبية متنوعة إلى الشهر الحالي؟")){loadDemo();toast("تم تحميل البيانات التجريبية");render();}});
@@ -427,11 +484,36 @@
       ...data.hospitals.map((hospital,index)=>[index+1,hospital.name,hospital.coordinator||"",hospital.phone||"",cell(hospital.active?"محتسب":"مخفي",hospital.active?ST.success:ST.muted)]),
     ];
     return [
+      quarterWorkbookSheet(),
       {name:`ملخص ${monthLabel(selectedMonth)}`,rows:summaryRows,widths:[9,31,12,13,12,9,10,9,17,10,13,11,15,16,15,11,15,16],freezeRows:7,freezeCols:2,merges:["A1:R1","A2:R2"],autoFilter:`A7:R${summaryRows.length}`,rowHeights:{1:29,2:23,7:34}},
       {name:"السجل",rows:logRows,widths:[13,11,31,13,13,13,17,15,13,13,28,15,15,24,13],freezeRows:4,freezeCols:3,merges:["A1:O1","A2:O2"],autoFilter:`A4:O${logRows.length}`,rowHeights:{1:29,2:23,4:34}},
       {name:"القواعد والإعدادات",rows:settingsRows,widths:[15,29,18,58],freezeRows:4,merges:["A1:D1","A2:D2"],autoFilter:`A4:D${settingsRows.length}`,rowHeights:{1:29,2:23,4:32}},
       {name:"المستشفيات",rows:hospitalsRows,widths:[10,34,25,20,14],freezeRows:4,merges:["A1:E1","A2:E2"],autoFilter:`A4:E${hospitalsRows.length}`,rowHeights:{1:29,2:23,4:32}},
     ];
+  }
+  function quarterWorkbookSheet(){
+    if(!X)throw new Error("مكوّن Excel غير محمّل");
+    const ST=X.STYLE;
+    const summary=quarterlySummary();
+    const scope=summary.hospitalId==="all"?"جميع المستشفيات المحتسبة":summary.hospitals[0]?.hospital.name||"لا توجد مستشفيات";
+    const metric=(value)=>summary.due?percentCell(value):cell("—",ST.muted);
+    const rows=[
+      [cell("ملخص ثلاثة أشهر — متابعة الحالات الحرجة والوفاة الدماغية",ST.title)],
+      [cell(`${monthLabel(summary.startMonth)} — ${monthLabel(summary.months.at(-1))} · ${scope} · أُنشئ ${formatDate(R.isoDate())} ${nowTime()}`,ST.section)],
+      [],
+      ["نسبة الاستجابة","الإرسال في الوقت","اكتمال التحديث","المؤشر العام","بلاغات جديدة","خروج/وفاة/تبرع","وفاة دماغية"].map((value)=>cell(value,ST.header)),
+      [metric(summary.response),metric(summary.punctuality),summary.completion===null?cell("—",ST.muted):percentCell(summary.completion),metric(summary.score),summary.newCases,summary.exits,summary.brainDeath],
+      [],
+      [cell("المقارنة الشهرية",ST.section)],
+      ["الشهر","مستحق","أرسل","الاستجابة","في الوقت","الالتزام بالوقت","المحدث","المطلوب","اكتمال التحديث","المؤشر","بلاغات جديدة","خروج/وفاة/تبرع","وفاة دماغية"].map((value)=>cell(value,ST.header)),
+      ...summary.monthly.map((item)=>[monthLabel(item.month),item.due,item.sent,item.due?percentCell(item.response):cell("—",ST.muted),item.ontime,item.due?percentCell(item.punctuality):cell("—",ST.muted),item.updated,item.required,item.completion===null?cell("—",ST.muted):percentCell(item.completion),item.due?percentCell(item.score):cell("—",ST.muted),item.newCases,item.exits,item.brainDeath]),
+      [],
+      [cell("ملخص المستشفيات خلال الفترة",ST.section)],
+      ["الترتيب","المستشفى","عبء الحالات","مستحق","أرسل","الاستجابة","في الوقت","الالتزام بالوقت","المحدث","المطلوب","اكتمال التحديث","بلاغات جديدة","خروج/وفاة/تبرع","وفاة دماغية","المؤشر","نقاط الترتيب"].map((value)=>cell(value,ST.header)),
+      ...summary.hospitals.map((item)=>[item.rank,item.hospital.name,item.load,item.due,item.sent,item.due?percentCell(item.response):cell("—",ST.muted),item.ontime,item.due?percentCell(item.punctuality):cell("—",ST.muted),item.updated,item.required,item.completion===null?cell("—",ST.muted):percentCell(item.completion),item.newCases,item.exits,item.brainDeath,item.due?percentCell(item.score):cell("—",ST.muted),item.due?item.rankingPoints:""]),
+    ];
+    if(!summary.hospitals.length)rows.push([cell("لا توجد مستشفيات محتسبة.",ST.muted)]);
+    return {name:"ملخص 3 أشهر",rows,widths:[11,34,13,11,11,15,12,18,12,12,16,14,18,15,13,15],freezeRows:8,freezeCols:2,merges:["A1:P1","A2:P2","A7:P7","A13:P13"],rowHeights:{1:29,2:23,4:32,8:34,14:34}};
   }
   async function createExcelFile(){
     const bytes=await X.createWorkbook(workbookSheets(),{title:"متابعة الحالات الحرجة والوفاة الدماغية",creator:"تجمع القصيم الصحي"});
@@ -445,6 +527,15 @@
       if(!options.silent)toast("تم تنزيل تقرير Excel بكل البيانات والنِسَب");
       return file;
     }catch(error){toast(`تعذّر إنشاء ملف Excel: ${error.message}`,"danger");return null;}
+  }
+  async function exportQuarterExcel(){
+    try{
+      toast("جارٍ إنشاء ملخص الأشهر الثلاثة…");
+      const bytes=await X.createWorkbook([quarterWorkbookSheet()],{title:"ملخص ثلاثة أشهر",creator:"تجمع القصيم الصحي"});
+      const summary=quarterlySummary();
+      download(`ملخص_ثلاثة_أشهر_${summary.startMonth}_إلى_${summary.months.at(-1)}.xlsx`,X.workbookBlob(bytes),X.MIME);
+      toast("تم تنزيل ملخص الأشهر الثلاثة");
+    }catch(error){toast(`تعذّر إنشاء الملخص: ${error.message}`,"danger");}
   }
   async function openGoogleSheets(){
     const approved=confirm("سيتم تنزيل تقرير Excel المحسوب على جهازك وفتح Google Sheets في علامة جديدة. بعد فتح الورقة اختر: ملف ← استيراد ← تحميل، ثم اختر الملف المنزّل. ستغادر البيانات جهازك فقط عندما تختار رفع الملف إلى Google.\n\nمتابعة؟");
